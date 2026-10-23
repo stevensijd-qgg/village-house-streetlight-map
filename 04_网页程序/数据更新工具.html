@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>数据更新工具 —— Excel 转 data.js</title>
+<style>
+  body { font-family: "Microsoft YaHei", sans-serif; max-width: 900px; margin: 20px auto; padding: 0 16px; color: #333; }
+  h1 { font-size: 20px; color: #1f4e79; }
+  .steps { background: #fff6de; border-left: 4px solid #e8a33d; padding: 10px 14px; font-size: 14px; line-height: 1.8; margin: 12px 0; }
+  label.big { font-weight: 700; display: block; margin: 16px 0 6px; }
+  textarea { width: 100%; height: 140px; font-family: Consolas, monospace; font-size: 12px; border: 1px solid #bbb; border-radius: 4px; padding: 8px; }
+  input[type=text] { padding: 6px 10px; border: 1px solid #bbb; border-radius: 4px; font-size: 14px; }
+  button { background: #1f4e79; color: #fff; border: none; border-radius: 4px; padding: 10px 22px; font-size: 15px; cursor: pointer; margin: 14px 6px 14px 0; }
+  button:hover { background: #2e6da8; }
+  #msg { font-size: 14px; margin: 8px 0; white-space: pre-wrap; }
+  #msg.err { color: #c00000; } #msg.ok { color: #1a7a1a; }
+  #out { height: 200px; }
+</style>
+</head>
+<body>
+<h1>数据更新工具：把 Excel 表格变成网页数据（data.js）</h1>
+<div class="steps">
+  <b>使用步骤（1分钟）：</b><br>
+  ① 打开《02_闲置房屋信息汇总表.xlsx》的"闲置房屋汇总"表，<b>连同表头</b>选中所有已填的行（Ctrl+A 或拖选），Ctrl+C 复制；<br>
+  ② 粘贴到下面第一个框；同样把"路灯汇总"表复制粘贴到第二个框（没有可留空）；<br>
+  ③ 填村名 → 点【生成 data.js】→ 点【下载 data.js】；<br>
+  ④ 用下载的文件<b>替换</b>本文件夹里的 data.js（同名覆盖），刷新 index.html 即可看到新数据。
+</div>
+
+村名：<input type="text" id="village" placeholder="如：青山村" style="width:160px">
+　<label style="font-size:14px"><input type="checkbox" id="pub"> 对外展示模式（房主姓名和电话不写入 data.js）</label>
+<br><label style="font-size:14px;display:inline-block;margin-top:6px">
+  <input type="checkbox" id="wgs"> 经纬度是 GPS/WGS84 坐标，自动纠偏到高德
+  <span style="color:#888">（点位在高德图上整体朝同一方向偏几百米时勾选；
+  第四记高德底图打的点<b>不要</b>勾选）</span></label>
+
+<label class="big">① 粘贴"闲置房屋汇总"表（含表头）：</label>
+<textarea id="tHouse" placeholder="从Excel复制后按 Ctrl+V 粘贴到这里…"></textarea>
+
+<label class="big">② 粘贴"路灯汇总"表（含表头，可留空）：</label>
+<textarea id="tLamp" placeholder="从Excel复制后按 Ctrl+V 粘贴到这里…"></textarea>
+
+<br>
+<button onclick="gen()">生成 data.js</button>
+<button onclick="dl()" id="btnDl" disabled>下载 data.js</button>
+<div id="msg"></div>
+
+<label class="big">生成结果预览：</label>
+<textarea id="out" readonly></textarea>
+
+<script>
+function parseTable(text) {
+  // Excel 复制出来是制表符分隔；过滤空行
+  const lines = text.replace(/\r/g, "").split("\n").filter(l => l.trim() !== "");
+  if (lines.length < 2) return null;
+  const header = lines[0].split("\t").map(s => s.trim());
+  const rows = lines.slice(1).map(l => l.split("\t"));
+  // 按表头名取值，兼容列顺序变化
+  const col = name => header.findIndex(h => h.includes(name));
+  return { header, rows, col };
+}
+const num = v => { const n = parseFloat(String(v).replace(/[^\d.\-]/g, "")); return isNaN(n) ? 0 : n; };
+const str = v => String(v == null ? "" : v).trim().replace(/"/g, "'");
+
+// WGS84 -> GCJ-02 纠偏（国测局偏转公式），勾选"自动纠偏"后使用
+function wgs2gcj(lng, lat) {
+  const PI = Math.PI, A = 6378245.0, EE = 0.00669342162296594323;
+  const x = lng - 105.0, y = lat - 35.0;
+  let dLat = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  dLat += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+  dLat += (20.0 * Math.sin(y * PI) + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0;
+  dLat += (160.0 * Math.sin(y / 12.0 * PI) + 320.0 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0;
+  let dLng = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  dLng += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+  dLng += (20.0 * Math.sin(x * PI) + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0;
+  dLng += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0;
+  const radLat = lat / 180.0 * PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - EE * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / ((A * (1 - EE)) / (magic * sqrtMagic) * PI);
+  dLng = (dLng * 180.0) / (A / sqrtMagic * Math.cos(radLat) * PI);
+  return [lng + dLng, lat + dLat];
+}
+
+let result = "";
+function gen() {
+  const msg = document.getElementById("msg");
+  msg.className = ""; msg.textContent = "";
+  // 先清掉上一次的结果：任何一步报错都不能让旧 data.js 还能被下载
+  result = "";
+  document.getElementById("out").value = "";
+  document.getElementById("btnDl").disabled = true;
+  const village = str(document.getElementById("village").value);
+  if (!village) {
+    msg.className = "err";
+    msg.textContent = "请填写村名，不能留空。";
+    return;
+  }
+  const problems = [];
+  const doWgs = document.getElementById("wgs").checked;
+  let nFixed = 0;
+
+  // ---- 房屋 ----
+  const th = parseTable(document.getElementById("tHouse").value);
+  if (!th) { msg.className = "err"; msg.textContent = "房屋表为空或只有表头，请连同表头一起复制粘贴。"; return; }
+  const need = ["测点编号", "经度", "纬度"];
+  for (const n of need) if (th.col(n) < 0) {
+    msg.className = "err"; msg.textContent = `房屋表缺少"${n}"列——请从Excel连同表头一起复制。`; return;
+  }
+  const houses = [];
+  // "附带面积"列出现两次：第一处属于"是否附带农田"，第二处属于"是否附带小院"，
+  // 按列位置区分（面积列取各自"是否附带"列之后最近的一个）
+  const farmCol = th.col("是否附带农田"), yardCol = th.col("是否附带小院");
+  const areaCols = [];
+  th.header.forEach((h, c) => { if (h.includes("附带面积")) areaCols.push(c); });
+  const nextArea = after => { for (const c of areaCols) if (c > after) return c; return -1; };
+  const farmAreaCol = nextArea(farmCol);
+  const yardAreaCol = nextArea(yardCol > farmAreaCol ? yardCol : farmAreaCol);
+  const pub = document.getElementById("pub").checked;
+  const seen = new Set();
+  th.rows.forEach((r, i) => {
+    const g = name => { const c = th.col(name); return c >= 0 ? str(r[c]) : ""; };
+    const gi = c => (c >= 0 && c < r.length) ? str(r[c]) : "";
+    const id = g("测点编号");
+    if (!id) { problems.push(`房屋表第${i + 2}行没有编号，已跳过`); return; }
+    if (g("房主姓名").includes("示例")) { problems.push(`已自动跳过示例行（${id}）`); return; }
+    // 编号重复会让网页里两处房屋共用一个标记，已租标记会标错房子
+    if (seen.has(id)) { problems.push(`房屋表第${i + 2}行编号 ${id} 重复，已跳过`); return; }
+    seen.add(id);
+    let lng = num(g("经度")), lat = num(g("纬度"));
+    if (!lng || !lat) problems.push(`${id} 经纬度为空或不是数字，点位不会显示在图上`);
+    else if (doWgs) { [lng, lat] = wgs2gcj(lng, lat).map(v => +v.toFixed(6)); nFixed++; }
+    houses.push({
+      // 对外展示版不只是网页上隐藏：姓名电话根本不写进 data.js，查看网页源码也看不到
+      id, owner: pub ? "" : g("房主姓名"), phone: pub ? "" : g("联系电话"), address: g("房屋地址"),
+      lng, lat, area: num(g("房屋面积")), rent: num(g("租金")),
+      farm: gi(farmCol), farmArea: num(gi(farmAreaCol)),
+      yard: gi(yardCol), yardArea: num(gi(yardAreaCol)),
+      note: g("备注"),
+      photos: g("照片文件名").split(/[;；,，]/).map(s => s.trim()).filter(Boolean),
+    });
+  });
+
+  // ---- 路灯 ----
+  const lamps = [];
+  const tl = parseTable(document.getElementById("tLamp").value);
+  if (tl && tl.col("编号") >= 0) {
+    tl.rows.forEach((r, i) => {
+      const g = name => { const c = tl.col(name); return c >= 0 ? str(r[c]) : ""; };
+      const id = g("编号");
+      if (!id) return;
+      if (g("位置描述").includes("示例")) { problems.push(`已自动跳过路灯示例行（${id}）`); return; }
+      let lng = num(g("经度")), lat = num(g("纬度"));
+      if (lng && lat && doWgs) { [lng, lat] = wgs2gcj(lng, lat).map(v => +v.toFixed(6)); nFixed++; }
+      lamps.push({ id, lng, lat, desc: g("位置描述"), status: g("状态") || "完好" });
+    });
+  }
+
+  result =
+`// data.js —— 由数据更新工具生成于 ${new Date().toLocaleString("zh-CN")}
+const CONFIG = {
+  villageName: ${JSON.stringify(village)},
+  center: null,
+  zoom: 16,
+  publicMode: ${pub},
+};
+const HOUSES = ${JSON.stringify(houses, null, 2)};
+const LAMPS = ${JSON.stringify(lamps, null, 2)};
+`;
+  document.getElementById("out").value = result;
+  document.getElementById("btnDl").disabled = false;
+  msg.className = "ok";
+  msg.textContent = `生成成功：闲置房屋 ${houses.length} 处，路灯 ${lamps.length} 盏。` +
+    (doWgs ? `\n已对 ${nFixed} 个点做 WGS84→高德 纠偏。` : "") +
+    (problems.length ? "\n注意：\n" + problems.join("\n") : "");
+}
+
+function dl() {
+  const blob = new Blob(["﻿" + result], { type: "text/javascript;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "data.js";
+  a.click();
+}
+</script>
+</body>
+</html>

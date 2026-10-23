@@ -1,0 +1,14 @@
+~$*
+*.tmp
+*.zip
+# 入户照片、真实走访数据涉及村民隐私，不进仓库
+04_网页程序/photos/*
+!04_网页程序/photos/照片命名说明.txt
+04_网页程序/更新部分/
+图片/
+05_成品图/
+点位及信息/
+.worktrees/
+.claude/
+.superpowers/
+node_modules/
